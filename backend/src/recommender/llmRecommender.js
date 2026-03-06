@@ -1,48 +1,85 @@
-import OpenAI from "openai";
 import { desc, eq, notInArray, sql } from "drizzle-orm";
 
 import { db } from "../db.js";
 import { bookEmbeddings, books, userEvents } from "../schema.js";
 import { getFallbackRecommendations } from "./fallbackRecommender.js";
+import { createEmbedding, getRecommendationStrategyLabel, rerankCandidates } from "./modelGateway.js";
 
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
-const RERANK_MODEL = process.env.RERANK_MODEL || "gpt-4o-mini";
+const EVENT_WEIGHTS = {
+  borrow: 4,
+  favorite: 3.5,
+  add_to_shelf: 3,
+  click: 2,
+  view: 1,
+  rating: 0.5
+};
 
-const client = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+const EVENT_LABELS = {
+  borrow: "borrowed",
+  favorite: "favorited",
+  add_to_shelf: "saved",
+  click: "clicked",
+  view: "viewed",
+  rating: "rated"
+};
+
+function getEventWeight(eventType) {
+  return EVENT_WEIGHTS[eventType] ?? 0.5;
+}
+
+function getEventLabel(eventType) {
+  return EVENT_LABELS[eventType] ?? "interacted with";
+}
 
 async function getUserProfileText(userId) {
   const rows = await db
     .select({
       title: books.title,
       author: books.author,
-      rating: userEvents.rating
+      category: books.category,
+      eventType: userEvents.eventType
     })
     .from(userEvents)
     .innerJoin(books, eq(books.id, userEvents.bookId))
     .where(eq(userEvents.userId, userId))
     .orderBy(desc(userEvents.createdAt))
-    .limit(30);
+    .limit(40);
 
   if (!rows.length) {
-    return "新用户，偏好未知";
+    return "New user with no borrowing history. Prefer broadly appealing, high-quality books.";
   }
 
-  return rows
-    .map((r) => `${r.title} by ${r.author}, rating=${r.rating}`)
+  const categoryScores = new Map();
+  const authorScores = new Map();
+
+  for (const row of rows) {
+    const weight = getEventWeight(row.eventType);
+    if (row.category) {
+      categoryScores.set(row.category, (categoryScores.get(row.category) || 0) + weight);
+    }
+    authorScores.set(row.author, (authorScores.get(row.author) || 0) + weight);
+  }
+
+  const topCategories = Array.from(categoryScores.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([category]) => category);
+  const topAuthors = Array.from(authorScores.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([author]) => author);
+  const recentActions = rows
+    .slice(0, 12)
+    .map((row) => `${getEventLabel(row.eventType)} "${row.title}" by ${row.author}${row.category ? ` [${row.category}]` : ""}`)
     .join("; ");
-}
 
-async function embedText(text) {
-  if (!client) {
-    return null;
-  }
-  const res = await client.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text
-  });
-  return res.data[0].embedding;
+  return [
+    topCategories.length ? `Preferred categories: ${topCategories.join(", ")}.` : "",
+    topAuthors.length ? `Frequently engaged authors: ${topAuthors.join(", ")}.` : "",
+    `Recent implicit behaviors: ${recentActions}.`
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 async function getCandidatesByEmbedding(embedding, userId, limit = 30) {
@@ -61,6 +98,7 @@ async function getCandidatesByEmbedding(embedding, userId, limit = 30) {
       title: books.title,
       author: books.author,
       description: books.description,
+      category: books.category,
       sim: similarity.mapWith(Number)
     })
     .from(books)
@@ -69,53 +107,41 @@ async function getCandidatesByEmbedding(embedding, userId, limit = 30) {
     .orderBy(distance)
     .limit(limit);
 
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    author: r.author,
-    description: r.description,
-    score: Number(r.sim)
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    author: row.author,
+    description: row.description,
+    category: row.category,
+    score: Number(row.sim)
   }));
 }
 
-async function rerankWithLLM(profileText, candidates, topk) {
-  if (!client || candidates.length === 0) {
+async function rerankWithModel(profileText, candidates, topk) {
+  if (candidates.length === 0) {
     return candidates.slice(0, topk);
   }
 
-  const prompt = `你是图书推荐排序器。\n用户画像: ${profileText}\n候选图书: ${JSON.stringify(
-    candidates.map((c) => ({ id: c.id, title: c.title, author: c.author, description: c.description }))
-  )}\n请返回JSON数组，按相关性降序，只包含id和reason，例如[{"id":"...","reason":"..."}]。`;
-
-  const completion = await client.chat.completions.create({
-    model: RERANK_MODEL,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [{ role: "user", content: prompt }]
-  });
-
-  let parsed;
-  try {
-    const content = completion.choices[0].message.content;
-    parsed = JSON.parse(content);
-  } catch {
-    return candidates.slice(0, topk);
-  }
-
-  const ranked = Array.isArray(parsed) ? parsed : parsed.items;
+  const ranked = await rerankCandidates(profileText, candidates, topk);
   if (!Array.isArray(ranked)) {
     return candidates.slice(0, topk);
   }
 
-  const candidateMap = new Map(candidates.map((c) => [String(c.id), c]));
+  const candidateMap = new Map(candidates.map((candidate) => [String(candidate.id), candidate]));
   const ordered = [];
 
   for (const item of ranked) {
     const id = String(item.id);
-    if (candidateMap.has(id)) {
-      ordered.push({ ...candidateMap.get(id), reason: item.reason || "LLM rerank" });
-      candidateMap.delete(id);
+    if (!candidateMap.has(id)) {
+      continue;
     }
+
+    ordered.push({
+      ...candidateMap.get(id),
+      reason: item.reason || "model rerank"
+    });
+    candidateMap.delete(id);
+
     if (ordered.length >= topk) {
       break;
     }
@@ -130,13 +156,13 @@ async function rerankWithLLM(profileText, candidates, topk) {
 
 export async function recommendForUser({ userId, topk = 10 }) {
   const profileText = await getUserProfileText(userId);
-  const embedding = await embedText(profileText);
+  const embedding = await createEmbedding(profileText);
   const candidates = await getCandidatesByEmbedding(embedding, userId, Math.max(topk * 3, 20));
-  const reranked = await rerankWithLLM(profileText, candidates, topk);
+  const reranked = await rerankWithModel(profileText, candidates, topk);
 
   return {
     userId,
-    strategy: "embedding + llm rerank",
+    strategy: getRecommendationStrategyLabel(),
     totalCandidates: candidates.length,
     items: reranked.slice(0, topk)
   };

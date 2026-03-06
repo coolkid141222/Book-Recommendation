@@ -5,11 +5,15 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/db.js && node --check src/schema.js && node --check src/recommender/llmRecommender.js && node --check src/recommender/fallbackRecommender.js && node --check src/generateEmbeddings.js",
-    "embed": "node src/generateEmbeddings.js"
+    "check": "node --check src/server.js && node --check src/db.js && node --check src/schema.js && node --check src/recommender/modelGateway.js && node --check src/recommender/llmRecommender.js && node --check src/recommender/fallbackRecommender.js && node --check src/generateEmbeddings.js && node --check src/importBooksFromCsv.js && node --check src/importInteractionsFromCsv.js",
+    "db:schema": "node src/applySchema.js",
+    "embed": "node src/generateEmbeddings.js",
+    "import:books": "node src/importBooksFromCsv.js",
+    "import:interactions": "node src/importInteractionsFromCsv.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "csv-parse": "^5.5.6",
     "drizzle-orm": "^0.44.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

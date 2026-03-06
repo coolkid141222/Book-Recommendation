@@ -7,9 +7,9 @@ INSERT INTO books (id, title, author, description) VALUES
 ('b6', 'Recommender Systems Handbook', 'Ricci', 'Academic and practical recommendation techniques.')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO user_events (user_id, book_id, rating) VALUES
-('u1', 'b1', 5), ('u1', 'b2', 4), ('u1', 'b3', 4),
-('u2', 'b2', 5), ('u2', 'b4', 4),
-('u3', 'b3', 5), ('u3', 'b5', 5),
-('u4', 'b4', 4), ('u4', 'b5', 4), ('u4', 'b6', 5)
+INSERT INTO user_events (user_id, book_id, event_type) VALUES
+('u1', 'b1', 'borrow'), ('u1', 'b2', 'click'), ('u1', 'b3', 'borrow'),
+('u2', 'b2', 'borrow'), ('u2', 'b4', 'click'),
+('u3', 'b3', 'borrow'), ('u3', 'b5', 'borrow'),
+('u4', 'b4', 'click'), ('u4', 'b5', 'borrow'), ('u4', 'b6', 'borrow')
 ON CONFLICT DO NOTHING;

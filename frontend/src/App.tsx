@@ -1,10 +1,22 @@
-import { type ReactNode, useState } from "react";
-import { BookOpen, Search, ShoppingCart, Sparkles, DatabaseZap, Download, BrainCircuit, Star } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
+import {
+  BarChart3,
+  BrainCircuit,
+  BookOpen,
+  Layers3,
+  Search,
+  ShoppingCart,
+  Star,
+  TrendingUp
+} from "lucide-react";
 
+import { fetchBooks, fetchModelEffect, type Book, type ModelEffectResponse } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Category = "全部" | "文学" | "科幻" | "推理" | "奇幻" | "经管" | "历史";
 
@@ -13,6 +25,7 @@ type PlaceholderBook = {
   title: string;
   author: string;
   category: Exclude<Category, "全部">;
+  rawGenres?: string[];
   badge?: string;
   discount?: string;
   price: string;
@@ -21,9 +34,11 @@ type PlaceholderBook = {
   ratingCount: number;
   coverClassName: string;
   accentClassName: string;
+  coverUrl?: string | null;
 };
 
 const categories: Category[] = ["全部", "文学", "科幻", "推理", "奇幻", "经管", "历史"];
+const datasetCategoryCycle: Exclude<Category, "全部">[] = ["文学", "科幻", "推理", "奇幻", "经管", "历史"];
 
 const books: PlaceholderBook[] = [
   {
@@ -183,11 +198,128 @@ const books: PlaceholderBook[] = [
   }
 ];
 
+function normalizeAuthorDisplay(value: string) {
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    return trimmed;
+  }
+
+  const content = trimmed.slice(1, -1).trim();
+  if (!content) {
+    return trimmed;
+  }
+
+  return content
+    .replace(/^'/, "")
+    .replace(/'$/, "")
+    .split(/',\s*'/)
+    .map((item) => item.replace(/\\'/g, "'").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function parseListValue(value?: string | null) {
+  if (!value) {
+    return [];
+  }
+
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    return [trimmed];
+  }
+
+  const content = trimmed.slice(1, -1).trim();
+  if (!content) {
+    return [];
+  }
+
+  return content
+    .replace(/^'/, "")
+    .replace(/'$/, "")
+    .split(/',\s*'/)
+    .map((item) => item.replace(/\\'/g, "'").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function normalizeCategory(value?: string | null): Exclude<Category, "全部"> {
+  if (value && categories.includes(value as Category) && value !== "全部") {
+    return value as Exclude<Category, "全部">;
+  }
+
+  return "文学";
+}
+
+function mapApiBookToPlaceholder(book: Book, index: number): PlaceholderBook {
+  const category = book.category
+    ? normalizeCategory(book.category)
+    : datasetCategoryCycle[index % datasetCategoryCycle.length];
+  const averageRating = Number(book.averageRating);
+  const ratingsCount = Number(book.ratingsCount);
+
+  return {
+    id: book.id,
+    title: book.title,
+    author: normalizeAuthorDisplay(book.author),
+    category,
+    rawGenres: parseListValue(book.rawGenres).slice(0, 3),
+    badge: Number.isFinite(ratingsCount) && ratingsCount > 150000 ? "热销" : index % 3 === 0 ? "推荐" : undefined,
+    discount: index % 4 === 0 ? `-${18 + (index % 5) * 3}%` : undefined,
+    price: `${36 + (index % 6) * 4}.00`,
+    originalPrice: `${52 + (index % 6) * 5}.00`,
+    rating: Number.isFinite(averageRating) ? averageRating : 4 + (index % 2),
+    ratingCount: Number.isFinite(ratingsCount) ? ratingsCount : 1000 + index * 137,
+    coverClassName: books[index % books.length].coverClassName,
+    accentClassName: books[index % books.length].accentClassName,
+    coverUrl: book.coverUrl || book.smallCoverUrl || null
+  };
+}
+
 export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<Category>("全部");
   const [keyword, setKeyword] = useState("");
+  const [shelf, setShelf] = useState<string[]>([]);
+  const [catalogBooks, setCatalogBooks] = useState<PlaceholderBook[]>([]);
+  const [catalogState, setCatalogState] = useState<"loading" | "ready" | "fallback">("loading");
+  const [modelEffect, setModelEffect] = useState<ModelEffectResponse | null>(null);
+  const [modelEffectState, setModelEffectState] = useState<"loading" | "ready" | "fallback">("loading");
 
-  const filteredBooks = books.filter((book) => {
+  useEffect(() => {
+    let active = true;
+
+    async function loadData() {
+      const [booksResult, modelEffectResult] = await Promise.allSettled([fetchBooks(), fetchModelEffect()]);
+      if (!active) {
+        return;
+      }
+
+      if (booksResult.status === "fulfilled" && booksResult.value.length) {
+        setCatalogBooks(booksResult.value.map(mapApiBookToPlaceholder));
+        setCatalogState("ready");
+      } else {
+        setCatalogBooks([]);
+        setCatalogState("fallback");
+      }
+
+      if (modelEffectResult.status === "fulfilled") {
+        setModelEffect(modelEffectResult.value);
+        setModelEffectState("ready");
+      } else {
+        setModelEffect(null);
+        setModelEffectState("fallback");
+      }
+    }
+
+    void loadData();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const sourceBooks = catalogState === "ready" ? catalogBooks : books;
+  const hasDatasetBooks = catalogState === "ready";
+
+  const filteredBooks = sourceBooks.filter((book) => {
     const categoryMatch = selectedCategory === "全部" || book.category === selectedCategory;
     const keywordMatch =
       keyword.trim() === "" ||
@@ -196,6 +328,11 @@ export default function App() {
 
     return categoryMatch && keywordMatch;
   });
+  const topGenreLabels = Array.from(new Set(filteredBooks.flatMap((book) => book.rawGenres || []))).slice(0, 8);
+
+  function toggleShelf(bookId: string) {
+    setShelf((current) => (current.includes(bookId) ? current.filter((id) => id !== bookId) : [...current, bookId]));
+  }
 
   return (
     <main className="relative min-h-screen bg-background text-foreground">
@@ -215,7 +352,9 @@ export default function App() {
             </div>
 
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <div className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center pl-4 text-muted-foreground">
+                <Search className="size-4" />
+              </div>
               <Input
                 className="h-12 rounded-2xl border-border/70 bg-background/88 pl-11 pr-4"
                 placeholder="搜索书籍、作者..."
@@ -224,8 +363,13 @@ export default function App() {
               />
             </div>
 
-            <Button variant="ghost" className="size-11 rounded-2xl p-0 text-foreground">
+            <Button variant="ghost" className="relative size-11 rounded-2xl p-0 text-foreground">
               <ShoppingCart className="size-5" />
+              {shelf.length ? (
+                <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-primary text-[11px] text-primary-foreground">
+                  {shelf.length}
+                </span>
+              ) : null}
             </Button>
           </div>
         </header>
@@ -250,15 +394,25 @@ export default function App() {
 
           <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-2xl font-semibold tracking-tight">找到 {filteredBooks.length} 本书籍</p>
-              <p className="mt-2 text-sm text-muted-foreground">当前全部为占位方案卡片，先验证书城布局与视觉，不占用数据库空间。</p>
+              <p className="text-2xl font-semibold tracking-tight">
+                {catalogState === "loading" ? "正在同步书目..." : `找到 ${filteredBooks.length} 本书籍`}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {catalogState === "loading"
+                  ? "正在从 Goodbooks 数据集加载书目、封面和评分信息。"
+                  : hasDatasetBooks
+                  ? "当前展示来自 Goodbooks 数据集导入的样本书目，封面、评分和交互记录已接入。"
+                  : "当前为占位书卡，接口未返回数据时会自动回退到这组视觉样本。"}
+              </p>
             </div>
             <Badge variant="outline" className="w-fit">
-              0.5GB DB Friendly
+              {catalogState === "loading" ? "Data Syncing" : hasDatasetBooks ? "Goodbooks Sample" : "0.5GB DB Friendly"}
             </Badge>
           </div>
 
-          <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+          <ModelEffectPanel state={modelEffectState} modelEffect={modelEffect} topGenreLabels={topGenreLabels} />
+
+          <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filteredBooks.map((book) => (
               <Card
                 key={book.id}
@@ -269,13 +423,19 @@ export default function App() {
                     {book.badge ? <Ribbon className="left-3 top-3 bg-[#ef4444] text-white">{book.badge}</Ribbon> : null}
                     {book.discount ? <Ribbon className="right-3 top-3 bg-[#f97316] text-white">{book.discount}</Ribbon> : null}
 
-                    <div className="absolute inset-0 flex flex-col justify-between p-5">
-                      <div className="rounded-full border border-white/25 bg-white/14 px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-white/85 backdrop-blur-sm">
-                        {book.category}
-                      </div>
+                    {book.coverUrl ? (
+                      <img
+                        src={book.coverUrl}
+                        alt={book.title}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : null}
 
+                    <div className="absolute inset-0 flex items-end p-5">
                       <div className={`rounded-[24px] border border-white/16 bg-black/10 p-5 backdrop-blur-[2px] ${book.accentClassName}`}>
-                        <p className="text-xs uppercase tracking-[0.28em] opacity-75">Placeholder Cover</p>
+                        <p className="text-xs uppercase tracking-[0.28em] opacity-75">{book.coverUrl ? "Book Cover" : "Placeholder Cover"}</p>
                         <p className="mt-4 font-display text-3xl leading-tight">{book.title}</p>
                         <p className="mt-2 text-sm opacity-80">{book.author}</p>
                       </div>
@@ -286,16 +446,27 @@ export default function App() {
                     <div>
                       <h2 className="text-2xl font-semibold leading-tight">{book.title}</h2>
                       <p className="mt-2 text-sm text-muted-foreground">{book.author}</p>
+                      {book.rawGenres?.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {book.rawGenres.slice(0, 2).map((genre) => (
+                            <Badge key={`${book.id}-${genre}`} variant="outline" className="rounded-full bg-secondary/60">
+                              {genre}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-1 text-[#f5b301]">
                       {Array.from({ length: 5 }).map((_, index) => (
                         <Star
                           key={index}
-                          className={`size-4 ${index < book.rating ? "fill-current" : "text-[#d9d9d9]"}`}
+                          className={`size-4 ${index < Math.round(book.rating) ? "fill-current" : "text-[#d9d9d9]"}`}
                         />
                       ))}
-                      <span className="ml-1 text-sm text-muted-foreground">({book.ratingCount})</span>
+                      <span className="ml-1 text-sm text-muted-foreground">
+                        {book.rating.toFixed(1)} ({book.ratingCount.toLocaleString()})
+                      </span>
                     </div>
 
                     <div className="flex items-end justify-between gap-3">
@@ -303,7 +474,11 @@ export default function App() {
                         <span className="text-3xl font-semibold">¥{book.price}</span>
                         {book.originalPrice ? <span className="pb-1 text-sm text-muted-foreground line-through">¥{book.originalPrice}</span> : null}
                       </div>
-                      <Button className="size-11 rounded-2xl p-0">
+                      <Button
+                        className="size-11 rounded-2xl p-0"
+                        onClick={() => toggleShelf(book.id)}
+                        variant={shelf.includes(book.id) ? "secondary" : "default"}
+                      >
                         <ShoppingCart className="size-4" />
                       </Button>
                     </div>
@@ -314,31 +489,176 @@ export default function App() {
           </div>
         </section>
 
-        <section className="mt-8 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <PlanCard
-            icon={<DatabaseZap className="size-5" />}
-            title="数据方案"
-            description="数据库只有 0.5GB，首页阶段不接真实书库。后续数据库只存用户、行为、精选书单和实验结果摘要，大批量书籍元数据与向量文件都放到库外。"
-          />
-          <PlanCard
-            icon={<Download className="size-5" />}
-            title="验证方案"
-            description="推荐算法验证不依赖线上书城数据。后续直接下载公开数据集到本地 `data/` 目录做离线实验，再把指标和少量样例结果回写到系统里。"
-          />
-          <PlanCard
-            icon={<BrainCircuit className="size-5" />}
-            title="算法路线"
-            description="推荐链路先按 Embedding Recall + Qwen Rerank 设计，后面再接你的自研 rerank 和传统 baseline，但这部分不占首页主视觉。"
-          />
-          <PlanCard
-            icon={<Sparkles className="size-5" />}
-            title="下一步"
-            description="如果这版书城布局方向对，就继续做真实分类页、图书详情页和搜索结果页；推荐实验页单独拆到 `/lab`，不污染书城观感。"
-          />
-        </section>
       </div>
     </main>
   );
+}
+
+function ModelEffectPanel({
+  state,
+  modelEffect,
+  topGenreLabels
+}: {
+  state: "loading" | "ready" | "fallback";
+  modelEffect: ModelEffectResponse | null;
+  topGenreLabels: string[];
+}) {
+  if (state === "loading") {
+    return (
+      <div className="mt-6 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="rounded-[24px] border border-border/60 bg-background/84 p-4">
+            <Skeleton className="h-5 w-28" />
+            <Skeleton className="mt-4 h-10 w-24" />
+            <Skeleton className="mt-3 h-4 w-full" />
+            <Skeleton className="mt-2 h-4 w-3/4" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (!modelEffect) {
+    return (
+      <div className="mt-6 rounded-[24px] border border-border/60 bg-background/84 p-5 text-sm text-muted-foreground">
+        模型效果面板暂不可用，书城仍可继续浏览。等模型接口或数据库状态恢复后，这里会展示当前引擎、事件分布和运行指标。
+      </div>
+    );
+  }
+
+  const { model, pipeline, runtimeMetrics, eventMix, categoryMix } = modelEffect;
+
+  return (
+    <div className="mt-6 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+      <MetricCard
+        icon={<BrainCircuit className="size-4" />}
+        label="当前引擎"
+        value={pipeline.mode === "semantic-ready" ? "向量召回已启用" : "当前走 fallback"}
+        description={`${model.embedding.provider}:${model.embedding.model} · ${model.rerank.provider}:${model.rerank.model}`}
+      >
+        <div className="flex flex-wrap gap-2">
+          <MetricChip label="Embedding" value={`${Math.round(pipeline.embeddingCoverage * 100)}%`} />
+          <MetricChip label="维度" value={String(model.embedding.dimensions || 0)} />
+        </div>
+      </MetricCard>
+
+      <MetricCard
+        icon={<Layers3 className="size-4" />}
+        label="数据规模"
+        value={`${pipeline.bookCount.toLocaleString()} 本书`}
+        description={`${pipeline.eventCount.toLocaleString()} 条隐式行为 · ${pipeline.userCount.toLocaleString()} 位用户`}
+      >
+        <div className="grid grid-cols-2 gap-3 text-sm text-muted-foreground">
+          <span>真实分类 {pipeline.categoryCount}</span>
+          <span>人均事件 {pipeline.avgEventsPerUser}</span>
+        </div>
+      </MetricCard>
+
+      <MetricCard
+        icon={<TrendingUp className="size-4" />}
+        label="行为信号"
+        value={`借阅占比 ${formatPercent(runtimeMetrics.borrowShare)}`}
+        description={`点击占比 ${formatPercent(runtimeMetrics.clickShare)} · 收藏占比 ${formatPercent(runtimeMetrics.favoriteShare)}`}
+      >
+        <div className="space-y-2">
+          {eventMix.slice(0, 4).map((item) => (
+            <SignalBar key={item.eventType} label={translateEventType(item.eventType)} count={item.count} share={item.share} />
+          ))}
+        </div>
+      </MetricCard>
+
+      <MetricCard
+        icon={<BarChart3 className="size-4" />}
+        label="真实类别"
+        value={categoryMix.length ? categoryMix.map((item) => item.category).join(" / ") : "未导入"}
+        description={`平均书籍评分 ${pipeline.averageBookRating.toFixed(2)} · 保留原始 genres 标签`}
+      >
+        <div className="flex flex-wrap gap-2">
+          {topGenreLabels.slice(0, 6).map((genre) => (
+            <Badge key={genre} variant="outline" className="rounded-full bg-secondary/50">
+              {genre}
+            </Badge>
+          ))}
+        </div>
+      </MetricCard>
+    </div>
+  );
+}
+
+function MetricCard({
+  icon,
+  label,
+  value,
+  description,
+  children
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  description: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="rounded-[24px] border border-border/60 bg-background/84 p-4 shadow-[0_16px_34px_-28px_rgba(27,52,64,0.28)]">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <span className="flex size-8 items-center justify-center rounded-2xl bg-primary/10 text-primary">{icon}</span>
+        <span>{label}</span>
+      </div>
+      <p className="mt-4 text-lg font-semibold leading-snug">{value}</p>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+      {children ? (
+        <>
+          <Separator className="my-4" />
+          {children}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function MetricChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-full border border-border/70 bg-card/70 px-3 py-1 text-xs text-muted-foreground">
+      {label} {value}
+    </span>
+  );
+}
+
+function SignalBar({ label, count, share }: { label: string; count: number; share: number }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+        <span>{label}</span>
+        <span>
+          {count.toLocaleString()} · {formatPercent(share)}
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-secondary/80">
+        <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(share * 100, 6)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function translateEventType(eventType: string) {
+  switch (eventType) {
+    case "view":
+      return "浏览";
+    case "click":
+      return "点击";
+    case "borrow":
+      return "借阅";
+    case "favorite":
+      return "收藏";
+    case "add_to_shelf":
+      return "加入书架";
+    default:
+      return eventType;
+  }
 }
 
 function Ribbon({ className, children }: { className?: string; children: ReactNode }) {
@@ -346,17 +666,5 @@ function Ribbon({ className, children }: { className?: string; children: ReactNo
     <div className={`absolute rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${className ?? ""}`}>
       {children}
     </div>
-  );
-}
-
-function PlanCard({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
-  return (
-    <Card className="rounded-[28px] border-border/70 bg-card/86">
-      <CardHeader>
-        <div className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">{icon}</div>
-        <CardTitle className="mt-3 font-display text-3xl">{title}</CardTitle>
-        <CardDescription className="text-sm leading-7 text-muted-foreground">{description}</CardDescription>
-      </CardHeader>
-    </Card>
   );
 }

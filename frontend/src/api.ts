@@ -19,7 +19,54 @@ export interface Book {
   id: string;
   title: string;
   author: string;
-  description: string;
+  description: string | null;
+  category?: string | null;
+  rawGenres?: string | null;
+  averageRating?: string | null;
+  ratingsCount?: number | null;
+  coverUrl?: string | null;
+  smallCoverUrl?: string | null;
+}
+
+export interface ModelConfigSnapshot {
+  embedding: {
+    provider: string;
+    model: string;
+    dimensions?: number;
+  };
+  rerank: {
+    provider: string;
+    model: string;
+  };
+}
+
+export interface ModelEffectResponse {
+  model: ModelConfigSnapshot;
+  pipeline: {
+    mode: string;
+    bookCount: number;
+    categoryCount: number;
+    averageBookRating: number;
+    embeddingCount: number;
+    embeddingCoverage: number;
+    eventCount: number;
+    userCount: number;
+    avgEventsPerUser: number;
+  };
+  runtimeMetrics: {
+    clickShare: number;
+    borrowShare: number;
+    favoriteShare: number;
+  };
+  eventMix: Array<{
+    eventType: string;
+    count: number;
+    share: number;
+  }>;
+  categoryMix: Array<{
+    category: string;
+    count: number;
+  }>;
 }
 
 export interface HealthResponse {
@@ -50,6 +97,11 @@ export async function fetchRecommendations(userId: string, topk = 10) {
 export async function fetchBooks() {
   const res = await fetch(`${BASE_URL}/api/books`);
   return parseJson<Book[]>(res);
+}
+
+export async function fetchModelEffect() {
+  const res = await fetch(`${BASE_URL}/api/model-effect`);
+  return parseJson<ModelEffectResponse>(res);
 }
 
 export async function fetchHealth() {
