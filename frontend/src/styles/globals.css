@@ -1,0 +1,73 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "URW Palladio L", serif;
+  --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 8px);
+}
+
+:root {
+  --shadow-color: rgba(22, 53, 66, 0.42);
+  --radius: 1.25rem;
+  --background: oklch(0.972 0.016 83.52);
+  --foreground: oklch(0.285 0.035 243.68);
+  --card: oklch(0.992 0.009 84.19);
+  --card-foreground: oklch(0.285 0.035 243.68);
+  --popover: oklch(0.992 0.009 84.19);
+  --popover-foreground: oklch(0.285 0.035 243.68);
+  --primary: oklch(0.391 0.063 225.31);
+  --primary-foreground: oklch(0.986 0.004 88.7);
+  --secondary: oklch(0.933 0.025 80.8);
+  --secondary-foreground: oklch(0.314 0.035 243.68);
+  --muted: oklch(0.952 0.016 84.76);
+  --muted-foreground: oklch(0.546 0.026 245.61);
+  --accent: oklch(0.82 0.097 67.67);
+  --accent-foreground: oklch(0.272 0.03 243.68);
+  --destructive: oklch(0.612 0.222 23.3);
+  --border: oklch(0.87 0.022 83.43);
+  --input: oklch(0.87 0.022 83.43);
+  --ring: oklch(0.391 0.063 225.31);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    margin: 0;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}

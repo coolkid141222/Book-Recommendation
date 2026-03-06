@@ -1,0 +1,19 @@
+{
+  "name": "book-rec-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/db.js && node --check src/schema.js && node --check src/recommender/llmRecommender.js && node --check src/recommender/fallbackRecommender.js && node --check src/generateEmbeddings.js",
+    "embed": "node src/generateEmbeddings.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "drizzle-orm": "^0.44.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "openai": "^4.56.0",
+    "pg": "^8.12.0"
+  }
+}
